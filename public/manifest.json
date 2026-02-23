@@ -1,0 +1,38 @@
+
+{
+  "name": "b4Flite Crew Portal",
+  "short_name": "b4Flite",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0D47A1",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "https://nngdzezbayixbrkpdofn.supabase.co/storage/v1/object/public/portal-uploads/logo_black.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://nngdzezbayixbrkpdofn.supabase.co/storage/v1/object/public/portal-uploads/logo_black.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "https://nngdzezbayixbrkpdofn.supabase.co/storage/v1/object/public/portal-uploads/logo_black.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "https://nngdzezbayixbrkpdofn.supabase.co/storage/v1/object/public/portal-uploads/logo_black.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "name": "zilair-staff-portal-5.1",
+  "private": true,
+  "version": "55.14.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@google/genai": "latest",
+    "@sentry/nextjs": "^10.39.0",
+    "@supabase/supabase-js": "2.42.0",
+    "@tanstack/react-query": "^5.35.1",
+    "@tanstack/react-table": "^8.16.0",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.474.0",
+    "next": "^16.1.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "tailwind-merge": "^2.3.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^20.12.7",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "@vitejs/plugin-react": "^5.1.4",
+    "autoprefixer": "^10.4.19",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "15.1.6",
+    "jsdom": "^28.1.0",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.3",
+    "typescript": "^5.4.5",
+    "vitest": "^4.0.18"
+  }
+}
