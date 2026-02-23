@@ -1,30 +1,14 @@
 
 import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
 
-// Helper to safely retrieve the API key from various potential sources
+// Helper to safely retrieve the API key
 const getApiKey = (): string | undefined => {
-  // 1. Process Env (Vite Define) - Must be explicit
-  if (typeof process !== 'undefined' && process.env.GEMINI_API_KEY) {
-      return process.env.GEMINI_API_KEY;
-  }
-
-  // 2. Runtime Config (Docker/Prod injection)
-  if (typeof window !== 'undefined' && window.__RUNTIME_CONFIG__ && window.__RUNTIME_CONFIG__.VITE_GEMINI_API_KEY) {
-      return window.__RUNTIME_CONFIG__.VITE_GEMINI_API_KEY;
-  }
-  
-  // 3. Vite Env (Local/Build) - Standard Vite usage via import.meta
-  // @ts-ignore
-  if (import.meta.env && import.meta.env.VITE_GEMINI_API_KEY) {
-      // @ts-ignore
-      return import.meta.env.VITE_GEMINI_API_KEY;
-  }
-  
-  return undefined;
+    // Standard Next.js environment variable
+    return process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
 };
 
-const timeout = (ms: number) => new Promise<never>((_, reject) => 
-    setTimeout(() => reject(new Error(`Request timed out after ${ms/1000} seconds`)), ms)
+const timeout = (ms: number) => new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(`Request timed out after ${ms / 1000} seconds`)), ms)
 );
 
 async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 2000, timeoutMs = 90000): Promise<T> {
@@ -33,7 +17,7 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 2000, tim
     } catch (error: any) {
         const isTimeout = error.message && error.message.includes('timed out');
         const isOverloaded = error.status === 503 || error.status === 429 || error.code === 503 || error.code === 429;
-        
+
         if (retries > 0 && (isOverloaded || isTimeout)) {
             console.warn(`AI Generation failed (${error.message || error.status}). Retrying in ${delay}ms...`);
             await new Promise(resolve => setTimeout(resolve, delay));
@@ -53,11 +37,11 @@ export interface ParsedMenuDay {
 }
 
 export interface GeneratedQuestion {
-  text: string;
-  type: 'mcq' | 'true_false';
-  options: string[];
-  correctAnswer: string;
-  category: string;
+    text: string;
+    type: 'mcq' | 'true_false';
+    options: string[];
+    correctAnswer: string;
+    category: string;
 }
 
 export interface QuestionImprovement {
@@ -169,20 +153,20 @@ export const parseMenuImage = async (
 };
 
 export const generateExamQuestions = async (
-  topic: string, 
-  count: number = 5, 
-  difficulty: string = 'Medium'
+    topic: string,
+    count: number = 5,
+    difficulty: string = 'Medium'
 ): Promise<GeneratedQuestion[]> => {
-  try {
-    const apiKey = getApiKey();
-    if (!apiKey) {
-        throw new Error("Gemini API Key is missing. Please configure VITE_GEMINI_API_KEY.");
-    }
+    try {
+        const apiKey = getApiKey();
+        if (!apiKey) {
+            throw new Error("Gemini API Key is missing. Please configure VITE_GEMINI_API_KEY.");
+        }
 
-    const ai = new GoogleGenAI({ apiKey });
-    const model = 'gemini-3-flash-preview'; 
+        const ai = new GoogleGenAI({ apiKey });
+        const model = 'gemini-3-flash-preview';
 
-    const prompt = `You are an expert aviation examiner. Create ${count} ${difficulty}-level exam questions about: "${topic}"
+        const prompt = `You are an expert aviation examiner. Create ${count} ${difficulty}-level exam questions about: "${topic}"
 
     Requirements:
     1. Relevant to aviation operations/safety.
@@ -191,46 +175,46 @@ export const generateExamQuestions = async (
     4. Category field required.
     `;
 
-    const response = await withRetry<GenerateContentResponse>(() => ai.models.generateContent({
-      model: model,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              text: { type: Type.STRING },
-              type: { type: Type.STRING, enum: ["mcq", "true_false"] },
-              options: { type: Type.ARRAY, items: { type: Type.STRING } },
-              correctAnswer: { type: Type.STRING },
-              category: { type: Type.STRING }
+        const response = await withRetry<GenerateContentResponse>(() => ai.models.generateContent({
+            model: model,
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            text: { type: Type.STRING },
+                            type: { type: Type.STRING, enum: ["mcq", "true_false"] },
+                            options: { type: Type.ARRAY, items: { type: Type.STRING } },
+                            correctAnswer: { type: Type.STRING },
+                            category: { type: Type.STRING }
+                        },
+                        required: ["text", "type", "options", "correctAnswer", "category"],
+                    },
+                },
             },
-            required: ["text", "type", "options", "correctAnswer", "category"],
-          },
-        },
-      },
-    }));
+        }));
 
-    if (response.text) {
-      return JSON.parse(response.text) as GeneratedQuestion[];
+        if (response.text) {
+            return JSON.parse(response.text) as GeneratedQuestion[];
+        }
+
+        throw new Error("No data returned from AI");
+
+    } catch (error: any) {
+        console.error("AI Generation Error:", error);
+        const msg = error.message || "Unknown error";
+        if (msg.includes("API Key")) throw new Error("Configuration Error: Gemini API Key is missing or invalid.");
+        if (msg.includes("503") || msg.includes("429")) throw new Error("AI Service overloaded. Please try again.");
+        throw new Error(`Failed to generate: ${msg}`);
     }
-    
-    throw new Error("No data returned from AI");
-
-  } catch (error: any) {
-    console.error("AI Generation Error:", error);
-    const msg = error.message || "Unknown error";
-    if (msg.includes("API Key")) throw new Error("Configuration Error: Gemini API Key is missing or invalid.");
-    if (msg.includes("503") || msg.includes("429")) throw new Error("AI Service overloaded. Please try again.");
-    throw new Error(`Failed to generate: ${msg}`);
-  }
 };
 
 export const improveQuestion = async (
-    questionText: string, 
-    correctAnswer: string, 
+    questionText: string,
+    correctAnswer: string,
     options: string[]
 ): Promise<QuestionImprovement> => {
     try {
@@ -343,7 +327,7 @@ export const generateRosterDraft = async (
         }));
 
         if (response.text) {
-             return JSON.parse(response.text) as RosterAssignment[];
+            return JSON.parse(response.text) as RosterAssignment[];
         }
         throw new Error("No roster data generated.");
 
