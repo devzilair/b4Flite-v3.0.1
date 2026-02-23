@@ -648,7 +648,9 @@ BEGIN
     END LOOP;
     -- RE-CREATE SINGLE ROBUST ADMIN POLICY (Split FOR ALL to avoid recursion on staff table)
     IF t = 'staff' THEN
-        EXECUTE format('CREATE POLICY "Enable all for admins" ON public.%I FOR INSERT, UPDATE, DELETE TO authenticated USING ((select public.is_admin()))', t);
+        EXECUTE format('CREATE POLICY "Admin Insert" ON public.%I FOR INSERT TO authenticated WITH CHECK ((select public.is_admin()))', t);
+        EXECUTE format('CREATE POLICY "Admin Update" ON public.%I FOR UPDATE TO authenticated USING ((select public.is_admin()))', t);
+        EXECUTE format('CREATE POLICY "Admin Delete" ON public.%I FOR DELETE TO authenticated USING ((select public.is_admin()))', t);
     ELSE
         EXECUTE format('CREATE POLICY "Enable all for admins" ON public.%I FOR ALL TO authenticated USING ((select public.is_admin()))', t);
     END IF;
