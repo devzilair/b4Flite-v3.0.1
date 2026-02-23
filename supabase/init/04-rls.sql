@@ -152,4 +152,12 @@ CREATE POLICY "Manage Swaps" ON public.duty_swaps FOR ALL TO authenticated USING
 DROP POLICY IF EXISTS "Admin Delete Audit" ON public.audit_logs;
 CREATE POLICY "Admin Delete Audit" ON public.audit_logs FOR DELETE TO authenticated USING ((select public.is_admin()));
 DROP POLICY IF EXISTS "Admin Read Audit" ON public.audit_logs;
-CREATE POLICY "Admin Read Audit" ON public.audit_logs FOR SELECT TO authenticated USING ((select public.is_admin()));
+CREATE POLICY "Admin Read Audit" ON public.audit_logs FOR SELECT TO authenticated USING (
+    (select public.is_admin()) OR 
+    EXISTS (
+        SELECT 1 FROM public.staff s
+        LEFT JOIN public.roles r ON s.role_id = r.id
+        WHERE s.auth_id = (select auth.uid())
+        AND ('audit:view' = ANY(r.permissions) OR 'audit:view' = ANY(s.individual_permissions))
+    )
+);

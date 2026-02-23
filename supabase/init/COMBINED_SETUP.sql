@@ -444,8 +444,21 @@ AS $$
 DECLARE
   sensitive_keys text[] := ARRAY['password', 'encrypted_password', 'token', 'secret', 'hr_data', 'next_of_kin', 'documents', 'signatures', 'answers', 'pilot_data'];
   start_offset int;
+  is_auth boolean;
 BEGIN
-  IF NOT (SELECT public.is_admin()) THEN RAISE EXCEPTION 'Access Denied'; END IF;
+  -- CHECK PERMISSION: Admin or granular 'audit:view'
+  SELECT (
+    public.is_admin() OR 
+    EXISTS (
+      SELECT 1 FROM public.staff s
+      LEFT JOIN public.roles r ON s.role_id = r.id
+      WHERE s.auth_id = (select auth.uid())
+      AND ('audit:view' = ANY(r.permissions) OR 'audit:view' = ANY(s.individual_permissions))
+    )
+  ) INTO is_auth;
+
+  IF NOT is_auth THEN RAISE EXCEPTION 'Access Denied'; END IF;
+  
   start_offset := (page_num - 1) * page_size;
   RETURN QUERY
   WITH filtered_data AS (
@@ -474,8 +487,21 @@ DECLARE
   query text;
   pk_col text := 'id';
   pairs text[]; key text; val jsonb;
+  is_auth boolean;
 BEGIN
-  IF NOT (SELECT public.is_admin()) THEN RAISE EXCEPTION 'Access Denied'; END IF;
+  -- CHECK PERMISSION: Admin or granular 'audit:revert'
+  SELECT (
+    public.is_admin() OR 
+    EXISTS (
+      SELECT 1 FROM public.staff s
+      LEFT JOIN public.roles r ON s.role_id = r.id
+      WHERE s.auth_id = (select auth.uid())
+      AND ('audit:revert' = ANY(r.permissions) OR 'audit:revert' = ANY(s.individual_permissions))
+    )
+  ) INTO is_auth;
+
+  IF NOT is_auth THEN RAISE EXCEPTION 'Access Denied'; END IF;
+
   SELECT * INTO log_record FROM public.audit_logs WHERE id = target_log_id;
   IF NOT FOUND THEN RAISE EXCEPTION 'Audit log record not found.'; END IF;
   
@@ -779,7 +805,15 @@ CREATE POLICY "Manage Swaps" ON public.duty_swaps FOR ALL TO authenticated USING
 DROP POLICY IF EXISTS "Admin Delete Audit" ON public.audit_logs;
 CREATE POLICY "Admin Delete Audit" ON public.audit_logs FOR DELETE TO authenticated USING ((select public.is_admin()));
 DROP POLICY IF EXISTS "Admin Read Audit" ON public.audit_logs;
-CREATE POLICY "Admin Read Audit" ON public.audit_logs FOR SELECT TO authenticated USING ((select public.is_admin()));
+CREATE POLICY "Admin Read Audit" ON public.audit_logs FOR SELECT TO authenticated USING (
+    (select public.is_admin()) OR 
+    EXISTS (
+        SELECT 1 FROM public.staff s
+        LEFT JOIN public.roles r ON s.role_id = r.id
+        WHERE s.auth_id = (select auth.uid())
+        AND ('audit:view' = ANY(r.permissions) OR 'audit:view' = ANY(s.individual_permissions))
+    )
+);
 -- ==============================================================================
 -- 6. PERFORMANCE INDEXES
 -- ==============================================================================
