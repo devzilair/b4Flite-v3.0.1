@@ -1,3 +1,18 @@
+
+# b4Flite Master Database Setup Script
+**Version:** 55.14.1 (Fixed Duplicate Policy Error)
+
+Run this entire script in your Supabase SQL Editor. 
+*   **Safe:** Checks `IF NOT EXISTS` to prevent errors.
+*   **Secure:** Implements the granular RLS policies from your setup guide.
+*   **Complete:** Includes Storage, Migrations, and Seed Data.
+
+---
+-- ==============================================================================
+-- 1. INITIAL SETUP & EXTENSIONS
+-- ==============================================================================
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
 -- ==============================================================================
 -- 2. CORE TABLE DEFINITIONS
 -- ==============================================================================
@@ -24,7 +39,7 @@ CREATE TABLE IF NOT EXISTS public.staff (
     name text NOT NULL,
     email text UNIQUE,
     phone text,
-    role_id text DEFAULT 'role_staff',
+    role_id text DEFAULT 'role_staff', -- Constraint added later to avoid circular dependency
     department_id text REFERENCES public.departments(id),
     sub_departments text[] DEFAULT '{}'::text[],
     managed_sub_departments text[] DEFAULT '{}'::text[],
@@ -337,20 +352,34 @@ CREATE TABLE IF NOT EXISTS public.audit_logs (
     new_data jsonb
 );
 
--- Cleanup Migrations
+-- ==============================================================================
+-- 3. SMART MIGRATIONS
+-- ==============================================================================
+
 DO $$
 BEGIN
+    -- Ensure staff has auth_id (v44)
     ALTER TABLE public.staff ADD COLUMN IF NOT EXISTS auth_id uuid UNIQUE;
+
+    -- Ensure lunch_orders has condiments (v55)
     ALTER TABLE public.lunch_orders ADD COLUMN IF NOT EXISTS selected_condiments text[] DEFAULT '{}'::text[];
+
+    -- Ensure flight_log_records has new columns for Experience Ledger (v49.9.9)
     ALTER TABLE public.flight_log_records ADD COLUMN IF NOT EXISTS flight_hours_by_aircraft jsonb DEFAULT '{}'::jsonb;
     ALTER TABLE public.flight_log_records ADD COLUMN IF NOT EXISTS aircraft_type text;
+    
+    -- Ensure rosters does NOT have ID column (Composite PK only) (v49.3.31)
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'rosters' AND column_name = 'id') THEN
         ALTER TABLE public.rosters DROP COLUMN id CASCADE;
     END IF;
+    
+    -- Ensure department_settings has sub_department_rules (v48)
     ALTER TABLE public.department_settings ADD COLUMN IF NOT EXISTS sub_department_rules jsonb DEFAULT '[]'::jsonb;
 END $$;
+
+
 -- ==============================================================================
--- 3. HELPER FUNCTIONS
+-- 4. HELPER FUNCTIONS
 -- ==============================================================================
 
 CREATE OR REPLACE FUNCTION public.is_admin()
@@ -457,7 +486,7 @@ BEGIN
   ) INTO is_auth;
 
   IF NOT is_auth THEN RAISE EXCEPTION 'Access Denied'; END IF;
-  
+
   start_offset := (page_num - 1) * page_size;
   RETURN QUERY
   WITH filtered_data AS (
@@ -551,11 +580,12 @@ BEGIN
   RETURN EXISTS (SELECT 1 FROM public.staff);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER STABLE SET search_path = public;
+
 -- ==============================================================================
--- 4. TRIGGERS
+-- 5. TRIGGERS
 -- ==============================================================================
 
--- 4.1 User Link
+-- 5.1 User Link
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -574,7 +604,7 @@ CREATE TRIGGER on_auth_user_created
 AFTER INSERT ON auth.users
 FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
--- 4.2 Security
+-- 5.2 Security
 CREATE OR REPLACE FUNCTION public.protect_critical_staff_columns()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -593,7 +623,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 DROP TRIGGER IF EXISTS protect_staff_columns_trigger ON public.staff;
 CREATE TRIGGER protect_staff_columns_trigger BEFORE UPDATE ON public.staff FOR EACH ROW EXECUTE FUNCTION public.protect_critical_staff_columns();
 
--- 4.3 Audit
+-- 5.3 Audit
 CREATE OR REPLACE FUNCTION public.log_audit_event()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -623,12 +653,13 @@ BEGIN
     ELSIF TG_TABLE_NAME = 'lunch_orders' THEN 
         v_record_id := COALESCE(v_new_data->>'date', v_old_data->>'date') || '_' || COALESCE(v_new_data->>'staff_id', v_old_data->>'staff_id');
     ELSE 
+        -- Default: Safely attempt to find 'id'. If it doesn't exist, it returns NULL instead of crashing.
         v_record_id := COALESCE(v_new_data->>'id', v_old_data->>'id', 'unknown');
     END IF;
 
     INSERT INTO public.audit_logs (changed_by, table_name, record_id, operation, old_data, new_data)
     VALUES (
-        v_staff_id,
+        v_staff_id, -- Correctly link to staff profile UUID
         TG_TABLE_NAME, 
         v_record_id, 
         TG_OP, 
@@ -650,11 +681,13 @@ BEGIN
         EXECUTE format('CREATE TRIGGER audit_trigger AFTER INSERT OR UPDATE OR DELETE ON public.%I FOR EACH ROW EXECUTE FUNCTION public.log_audit_event()', t);
     END LOOP;
 END $$;
+
+
 -- ==============================================================================
--- 5. ROW LEVEL SECURITY (RLS) POLICIES
+-- 6. ROW LEVEL SECURITY (RLS) POLICIES
 -- ==============================================================================
 
--- 5.0 CLEAN SLATE & GLOBAL ADMIN
+-- 6.0 CLEAN SLATE & GLOBAL ADMIN
 DO $$ 
 DECLARE 
   t text;
@@ -691,7 +724,7 @@ BEGIN
   END LOOP; 
 END $$;
 
--- 5.1 STAFF
+-- 6.1 STAFF
 DROP POLICY IF EXISTS "Read Staff" ON public.staff;
 CREATE POLICY "Read Staff" ON public.staff FOR SELECT TO authenticated USING (true);
 DROP POLICY IF EXISTS "Update Self" ON public.staff;
@@ -701,7 +734,7 @@ CREATE POLICY "Update Managed Dept" ON public.staff FOR UPDATE TO authenticated 
     department_id IN (SELECT department_id FROM public.staff WHERE auth_id = (select auth.uid()) AND (role_id = 'role_manager' OR 'staff:edit' = ANY(individual_permissions)))
 );
 
--- 5.2 CONFIG TABLES
+-- 6.2 CONFIG TABLES (Standard Read-Only for Staff)
 DO $$
 DECLARE t text;
 BEGIN
@@ -715,7 +748,7 @@ BEGIN
         EXECUTE format('CREATE POLICY "Public Read" ON public.%I FOR SELECT TO authenticated USING (true)', t);
     END LOOP;
 
-    -- Department Settings
+    -- Department Settings consolidation
     DROP POLICY IF EXISTS "Manage Settings" ON public.department_settings;
     CREATE POLICY "Manage Settings" ON public.department_settings FOR ALL TO authenticated USING (
         (select public.is_manager()) AND department_id = (select public.get_my_department_id())
@@ -724,7 +757,7 @@ BEGIN
     CREATE POLICY "Public Read" ON public.department_settings FOR SELECT TO authenticated USING (true);
 END $$;
 
--- 5.3 ROSTERS & MODULES
+-- 6.3 ROSTERS & MODULES
 DROP POLICY IF EXISTS "Manage Rosters" ON public.rosters;
 CREATE POLICY "Manage Rosters" ON public.rosters FOR ALL TO authenticated USING ((select public.can_manage_roster_by_dept(department_id)));
 DROP POLICY IF EXISTS "Read Rosters" ON public.rosters;
@@ -734,7 +767,7 @@ CREATE POLICY "Manage Metadata" ON public.roster_metadata FOR ALL TO authenticat
 DROP POLICY IF EXISTS "View Metadata" ON public.roster_metadata;
 CREATE POLICY "View Metadata" ON public.roster_metadata FOR SELECT TO authenticated USING (true);
 
--- 5.4 OPERATIONS
+-- 6.4 OPERATIONS (Flight Logs, Leave, Lunch)
 DROP POLICY IF EXISTS "Read Flight Logs" ON public.flight_log_records;
 CREATE POLICY "Read Flight Logs" ON public.flight_log_records FOR SELECT TO authenticated USING (
     staff_id IN (SELECT id FROM public.staff WHERE auth_id = (select auth.uid())) OR
@@ -778,7 +811,7 @@ CREATE POLICY "Manage Lunch Orders" ON public.lunch_orders FOR ALL TO authentica
     )
 );
 
--- 5.5 TRAINING
+-- 6.5 TRAINING (Exams, FSI)
 DROP POLICY IF EXISTS "View FSI" ON public.fsi_documents;
 CREATE POLICY "View FSI" ON public.fsi_documents FOR SELECT TO authenticated USING (true);
 DROP POLICY IF EXISTS "Manage FSI" ON public.fsi_documents;
@@ -808,7 +841,7 @@ CREATE POLICY "Manage Attempts" ON public.exam_attempts FOR ALL TO authenticated
     staff_id IN (SELECT id FROM public.staff WHERE auth_id = (select auth.uid())) OR (select public.is_manager())
 );
 
--- 5.6 HR & AUDIT
+-- 6.6 HR & AUDIT
 DROP POLICY IF EXISTS "Manage Swaps" ON public.duty_swaps;
 CREATE POLICY "Manage Swaps" ON public.duty_swaps FOR ALL TO authenticated USING (
     requester_staff_id IN (SELECT id FROM public.staff WHERE auth_id = (select auth.uid())) 
@@ -828,8 +861,11 @@ CREATE POLICY "Admin Read Audit" ON public.audit_logs FOR SELECT TO authenticate
         AND ('audit:view' = ANY(r.permissions) OR 'audit:view' = ANY(s.individual_permissions))
     )
 );
+
+-- 6.7 MODULES
+
 -- ==============================================================================
--- 6. PERFORMANCE INDEXES
+-- 7. PERFORMANCE INDEXES
 -- ==============================================================================
 
 CREATE INDEX IF NOT EXISTS idx_staff_auth_id ON public.staff(auth_id);
@@ -878,8 +914,9 @@ CREATE INDEX IF NOT EXISTS idx_audit_changed_at ON public.audit_logs(changed_at 
 CREATE INDEX IF NOT EXISTS idx_audit_changed_by ON public.audit_logs(changed_by);
 
 ANALYZE;
+
 -- ==============================================================================
--- 7. STORAGE SETUP
+-- 8. STORAGE SETUP
 -- ==============================================================================
 INSERT INTO storage.buckets (id, name, public) VALUES ('portal-uploads', 'portal-uploads', true) ON CONFLICT (id) DO NOTHING;
 DROP POLICY IF EXISTS "Public Access" ON storage.objects;
@@ -890,11 +927,12 @@ DROP POLICY IF EXISTS "Owner Update" ON storage.objects;
 CREATE POLICY "Owner Update" ON storage.objects FOR UPDATE TO authenticated USING ( bucket_id = 'portal-uploads' AND (select auth.uid()) = owner );
 DROP POLICY IF EXISTS "Owner Delete" ON storage.objects;
 CREATE POLICY "Owner Delete" ON storage.objects FOR DELETE TO authenticated USING ( bucket_id = 'portal-uploads' AND (select auth.uid()) = owner );
+
 -- ==============================================================================
--- 8. SEED DATA (BOOTSTRAPPING)
+-- 9. SEED DATA (BOOTSTRAPPING)
 -- ==============================================================================
 
--- Ensure standard roles exist
+-- Ensure standard roles exist so FK constraints don't fail on first insert
 INSERT INTO public.roles (id, name, permissions) VALUES
 ('role_super_admin', 'Super Admin', '{}'),
 ('role_admin', 'Administrator', '{}'),

@@ -11,21 +11,30 @@ BEGIN
   FOR t IN SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     
+    -- AGGRESSIVELY Drop ALL existing policies to prevent "ghost" policies (Advisor 0006)
     FOR p IN (SELECT policyname FROM pg_policies WHERE tablename = t AND schemaname = 'public') LOOP
-        IF p.policyname IN ('Enable all for admins', 'Public Read', 'Admin Write', 'Admin Delete', 'Manage ...', 'Support Legacy Upsert', 'View Staff', 'Read Staff', 'Update Self', 'Update Managed Dept') 
-           OR p.policyname ILIKE 'Admin %' 
-           OR p.policyname ILIKE '% Legacy %' 
-        THEN
-            EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', p.policyname, t);
-        END IF;
+        EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', p.policyname, t);
     END LOOP;
-    -- RE-CREATE SINGLE ROBUST ADMIN POLICY (Split FOR ALL to avoid recursion on staff table)
+
+    -- CREATE ROBUST ADMIN POLICIES (Split to avoid recursion on staff table)
     IF t = 'staff' THEN
         EXECUTE format('CREATE POLICY "Admin Insert" ON public.%I FOR INSERT TO authenticated WITH CHECK ((select public.is_admin()))', t);
         EXECUTE format('CREATE POLICY "Admin Update" ON public.%I FOR UPDATE TO authenticated USING ((select public.is_admin()))', t);
         EXECUTE format('CREATE POLICY "Admin Delete" ON public.%I FOR DELETE TO authenticated USING ((select public.is_admin()))', t);
     ELSE
-        EXECUTE format('CREATE POLICY "Enable all for admins" ON public.%I FOR ALL TO authenticated USING ((select public.is_admin()))', t);
+        -- Split FOR ALL into CRUD + SELECT to allow Selective "Public Read" without Multiple Permissive Policies
+        EXECUTE format('CREATE POLICY "Admin CRUD" ON public.%I FOR INSERT TO authenticated WITH CHECK ((select public.is_admin()))', t);
+        EXECUTE format('CREATE POLICY "Admin CRUD Update" ON public.%I FOR UPDATE TO authenticated USING ((select public.is_admin()))', t);
+        EXECUTE format('CREATE POLICY "Admin CRUD Delete" ON public.%I FOR DELETE TO authenticated USING ((select public.is_admin()))', t);
+        
+        -- Only add Admin Select if not intended for Public Read later
+        IF t NOT IN ('roles', 'leave_types', 'public_holidays', 'roster_view_templates', 'custom_field_definitions', 
+                     'validation_rule_sets', 'qualification_types', 'aircraft_types', 'license_types', 
+                     'special_qualifications', 'departments', 'checklist_templates', 'performance_templates', 
+                     'lunch_menus', 'department_settings', 'rosters', 'roster_metadata', 'fsi_documents', 
+                     'fsi_acknowledgments', 'exams', 'questions') THEN
+            EXECUTE format('CREATE POLICY "Admin Select" ON public.%I FOR SELECT TO authenticated USING ((select public.is_admin()))', t);
+        END IF;
     END IF;
   END LOOP; 
 END $$;
@@ -44,12 +53,17 @@ CREATE POLICY "Update Managed Dept" ON public.staff FOR UPDATE TO authenticated 
 DO $$
 DECLARE t text;
 BEGIN
-    FOREACH t IN ARRAY ARRAY['roles', 'leave_types', 'public_holidays', 'roster_view_templates', 'custom_field_definitions', 'validation_rule_sets', 'qualification_types', 'aircraft_types', 'license_types', 'special_qualifications', 'departments', 'checklist_templates', 'performance_templates', 'lunch_menus'] LOOP
-        DROP POLICY IF EXISTS "Public Read" ON public.staff;
-        EXECUTE format('DROP POLICY IF EXISTS "Public Read" ON %I', t);
-        EXECUTE format('CREATE POLICY "Public Read" ON %I FOR SELECT TO authenticated USING (true)', t);
+    FOR t IN SELECT table_name FROM information_schema.tables 
+             WHERE table_name IN ('roles', 'leave_types', 'public_holidays', 'roster_view_templates', 
+                                 'custom_field_definitions', 'validation_rule_sets', 'qualification_types', 
+                                 'aircraft_types', 'license_types', 'special_qualifications', 'departments', 
+                                 'checklist_templates', 'performance_templates', 'lunch_menus') 
+    LOOP
+        EXECUTE format('DROP POLICY IF EXISTS "Public Read" ON public.%I', t);
+        EXECUTE format('CREATE POLICY "Public Read" ON public.%I FOR SELECT TO authenticated USING (true)', t);
     END LOOP;
 
+    -- Department Settings
     DROP POLICY IF EXISTS "Manage Settings" ON public.department_settings;
     CREATE POLICY "Manage Settings" ON public.department_settings FOR ALL TO authenticated USING (
         (select public.is_manager()) AND department_id = (select public.get_my_department_id())
@@ -149,8 +163,9 @@ CREATE POLICY "Manage Swaps" ON public.duty_swaps FOR ALL TO authenticated USING
     OR target_staff_id IN (SELECT id FROM public.staff WHERE auth_id = (select auth.uid()))
     OR (select public.is_manager())
 );
-DROP POLICY IF EXISTS "Admin Delete Audit" ON public.audit_logs;
-CREATE POLICY "Admin Delete Audit" ON public.audit_logs FOR DELETE TO authenticated USING ((select public.is_admin()));
+-- Audit permissions are handled specifically to allow 'audit:view'
+DROP POLICY IF EXISTS "Admin CRUD Delete" ON public.audit_logs;
+CREATE POLICY "Admin CRUD Delete" ON public.audit_logs FOR DELETE TO authenticated USING ((select public.is_admin()));
 DROP POLICY IF EXISTS "Admin Read Audit" ON public.audit_logs;
 CREATE POLICY "Admin Read Audit" ON public.audit_logs FOR SELECT TO authenticated USING (
     (select public.is_admin()) OR 
