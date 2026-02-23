@@ -19,8 +19,12 @@ BEGIN
             EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', p.policyname, t);
         END IF;
     END LOOP;
-
-    EXECUTE format('CREATE POLICY "Enable all for admins" ON public.%I FOR ALL TO authenticated USING ((select public.is_admin()))', t);
+    -- RE-CREATE SINGLE ROBUST ADMIN POLICY (Split FOR ALL to avoid recursion on staff table)
+    IF t = 'staff' THEN
+        EXECUTE format('CREATE POLICY "Enable all for admins" ON public.%I FOR INSERT, UPDATE, DELETE TO authenticated USING ((select public.is_admin()))', t);
+    ELSE
+        EXECUTE format('CREATE POLICY "Enable all for admins" ON public.%I FOR ALL TO authenticated USING ((select public.is_admin()))', t);
+    END IF;
   END LOOP; 
 END $$;
 
