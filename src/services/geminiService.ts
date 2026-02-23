@@ -160,7 +160,7 @@ export const generateExamQuestions = async (
     try {
         const apiKey = getApiKey();
         if (!apiKey) {
-            throw new Error("Gemini API Key is missing. Please configure VITE_GEMINI_API_KEY.");
+            throw new Error("Gemini API Key is missing. Please configure NEXT_PUBLIC_GEMINI_API_KEY.");
         }
 
         const ai = new GoogleGenAI({ apiKey });
