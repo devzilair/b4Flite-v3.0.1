@@ -1,7 +1,6 @@
 'use client';
 
 import React, { ErrorInfo, ReactNode } from "react";
-import * as Sentry from "@sentry/nextjs";
 
 interface Props {
   children?: ReactNode;
@@ -30,11 +29,15 @@ class GlobalErrorBoundary extends React.Component<Props, State> {
     console.error("Uncaught error:", error, errorInfo);
 
     // Capture exception in Sentry
-    Sentry.captureException(error, {
-      extra: {
-        componentStack: errorInfo.componentStack,
-      },
-    });
+    if (typeof window !== 'undefined') {
+      import("@sentry/nextjs").then(Sentry => {
+        Sentry.captureException(error, {
+          extra: {
+            componentStack: errorInfo.componentStack,
+          },
+        });
+      });
+    }
   }
 
   render(): ReactNode {

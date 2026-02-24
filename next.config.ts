@@ -19,4 +19,6 @@ export default withSentryConfig(nextConfig, {
     silent: true,
     org: "zilair",
     project: "staff-portal",
+    authToken: process.env.SENTRY_AUTH_TOKEN,
+    disableServerSideSourceMaps: true,
 });
